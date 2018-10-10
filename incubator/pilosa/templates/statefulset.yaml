@@ -1,0 +1,123 @@
+apiVersion: apps/v1beta2
+kind: StatefulSet
+metadata:
+  name: {{ include "pilosa.fullname" . }}
+  labels:
+    app: {{ include "pilosa.name" . }}
+    chart: {{ include "pilosa.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "pilosa.name" . }}
+      release: {{ .Release.Name }}
+  serviceName: {{ template "pilosa.fullname" . }}-headless
+  podManagementPolicy: {{ .Values.podManagementPolicy }}
+  updateStrategy:
+{{ toYaml .Values.updateStrategy | indent 4 }}
+{{- if and .Values.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: pilosa-storage
+    {{- with .Values.persistence.annotations  }}
+      annotations:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    spec:
+      accessModes: 
+        {{- range .Values.persistence.accessModes }}
+        - {{ . | quote }}
+        {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.persistence.size | quote }}
+      storageClassName: {{ .Values.persistence.storageClassName }}
+{{- end }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "pilosa.name" . }}
+        release: {{ .Release.Name }}
+    spec:
+#      initContainers:
+#        - name: set-coordinator
+#          image: busybox
+#          command:
+#            - "/bin/sh"
+#            - "-c"
+#            - "[ ${HOSTNAME##*-} -eq 0 ] && export PILOSA_CLUSTER_COORDINATOR=true || export PILOSA_CLUSTER_COORDINATOR=false; printenv"
+      {{- if not .Values.persistence.enabled }}
+      volumes:
+        - name: pilosa-storage
+          emptyDir: {}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+          - /bin/sh
+          - -exc
+          - |
+            [ ${HOSTNAME##*-} == 0 ] && \
+            export PILOSA_CLUSTER_COORDINATOR=true; \
+            /pilosa server
+          env:
+          - name: MY_POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          - name: MY_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: MY_POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PILOSA_BIND
+            value: $(MY_POD_IP):{{ .Values.pilosa.PILOSA_BIND_PORT }}
+            #value: $(MY_POD_NAME).{{ include "pilosa.fullname" . }}-headless.$(MY_POD_NAMESPACE).svc.cluster.local
+          - name: PILOSA_DATA_DIR
+            value: /data/pilosa
+          - name: PILOSA_GOSSIP_PORT
+            value: "11101"
+          - name: PILOSA_GOSSIP_SEEDS
+            #value: {{ include "pilosa.fullname" . }}:11101
+            value: "$(MY_POD_NAME).{{ include "pilosa.fullname" . }}-headless.$(MY_POD_NAMESPACE).svc.{{ .Values.pilosa.CLUSTER_DOMAIN }}:{{ .Values.pilosa.PILOSA_GOSSIP_PORT }},{{ include "pilosa.fullname" . }}:{{ .Values.pilosa.PILOSA_GOSSIP_PORT }}"
+          - name: PILOSA_CLUSTER_REPLICAS
+            value: "{{ .Values.pilosa.PILOSA_CLUSTER_REPLICAS }}"
+          ports:
+            - name: http
+              containerPort: {{ .Values.pilosa.PILOSA_BIND_PORT }}
+              protocol: TCP
+            - name: gossip
+              containerPort: {{ .Values.pilosa.PILOSA_GOSSIP_PORT }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: http
+          volumeMounts:
+            - mountPath: /data
+              name: pilosa-storage
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+    {{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+    {{- end }}

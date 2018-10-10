@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pilosa.fullname" . }}
+  labels:
+    app: {{ include "pilosa.name" . }}
+    chart: {{ include "pilosa.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.pilosa.PILOSA_GOSSIP_PORT }}
+      targetPort: gossip
+      protocol: TCP
+      name: gossip
+  selector:
+    app: {{ include "pilosa.name" . }}
+    release: {{ .Release.Name }}
